@@ -67,6 +67,9 @@ class MarkdownConverter:
         body = self._convert_file_refs(body)
         body = self._convert_stepper(body)
 
+        # Convert GitBook card tables to Mintlify CardGroup/Card
+        body = self._convert_card_tables(body)
+
         # Clean up any remaining template tags
         body = self._cleanup_template_tags(body)
 
@@ -392,6 +395,73 @@ class MarkdownConverter:
 
         pattern = r'<pre[^>]*?((?:class|data-)[^>]*)?>\s*<code[^>]*?((?:class|data-)[^>]*)?>(.*?)</code>\s*</pre>'
         return re.sub(pattern, replace_pre_code, content, flags=re.DOTALL)
+
+    def _convert_card_tables(self, content: str) -> str:
+        """Convert GitBook <table data-view="cards"> to Mintlify CardGroup/Card."""
+        def replace_card_table(match):
+            table_html = match.group(0)
+
+            # Parse column types from <thead> <th> attributes
+            col_types = []  # 'title', 'description', 'target', 'hidden'
+            for th_match in re.finditer(r'<th\b([^>]*)>', table_html):
+                attrs = th_match.group(1)
+                if 'data-card-target' in attrs:
+                    col_types.append('target')
+                elif 'data-hidden' in attrs:
+                    col_types.append('hidden')
+                elif not col_types:
+                    col_types.append('title')
+                else:
+                    col_types.append('description')
+
+            # Parse body rows
+            tbody_match = re.search(r'<tbody>(.*?)</tbody>', table_html, re.DOTALL)
+            if not tbody_match:
+                return table_html
+
+            cards = []
+            for row_match in re.finditer(r'<tr>(.*?)</tr>', tbody_match.group(1), re.DOTALL):
+                row = row_match.group(1)
+                cells = [m.group(1).strip() for m in re.finditer(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)]
+
+                title = ''
+                description = ''
+                href = ''
+
+                for i, cell in enumerate(cells):
+                    col_type = col_types[i] if i < len(col_types) else 'hidden'
+
+                    if col_type == 'title':
+                        title = re.sub(r'<[^>]+>', '', cell).strip()
+                    elif col_type == 'description':
+                        description = cell.strip()
+                    elif col_type == 'target':
+                        link_match = re.search(r'<a\s+href="([^"]+)"', cell)
+                        if link_match:
+                            raw_href = link_match.group(1)
+                            if not raw_href.startswith(('/broken/', 'http')):
+                                href = self._convert_md_path(raw_href)
+                                if not href.startswith(('http', '#', '/')):
+                                    href = '/' + href
+
+                if title:
+                    card_attrs = f'title="{self._escape_yaml(title)}"'
+                    if href:
+                        card_attrs += f' href="{href}"'
+                    card = f'<Card {card_attrs}>\n{description}\n</Card>'
+                    cards.append(card)
+
+            if not cards:
+                return table_html
+
+            cols = min(len(cards), 3)
+            result = f'\n<CardGroup cols="{cols}">\n\n'
+            result += '\n\n'.join(cards)
+            result += '\n\n</CardGroup>\n'
+            return result
+
+        pattern = r'<table[^>]*data-view="cards"[^>]*>.*?</table>'
+        return re.sub(pattern, replace_card_table, content, flags=re.DOTALL)
 
     def _cleanup_template_tags(self, content: str) -> str:
         """Remove any remaining {% %} template tags that weren't caught by specific converters."""
