@@ -170,11 +170,11 @@ def _build_pages(items: list) -> list:
 
 
 def inject_nav_icons(nav: list, output_dir: str) -> list:
-    """Add icons to navigation groups by reading page frontmatter from output."""
+    """Add icons to navigation groups and set sidebarTitle for parent pages."""
     import os
 
-    def _extract_icon(page_path: str) -> Optional[str]:
-        """Read icon from a converted page's frontmatter."""
+    def _read_frontmatter(page_path: str) -> Optional[str]:
+        """Read raw frontmatter string from a converted page."""
         mdx_path = os.path.join(output_dir, f"{page_path}.mdx")
         if not os.path.isfile(mdx_path):
             return None
@@ -184,14 +184,51 @@ def inject_nav_icons(nav: list, output_dir: str) -> list:
             if not content.startswith('---'):
                 return None
             end = content.index('---', 3)
+            return content[3:end].strip()
+        except (ValueError, IOError):
+            return None
+
+    def _extract_field(frontmatter: str, field: str) -> Optional[str]:
+        """Extract a field value from frontmatter text."""
+        for line in frontmatter.split('\n'):
+            m = re.match(rf'^{field}:\s*"?([^"]+)"?\s*$', line)
+            if m:
+                return m.group(1).strip()
+        return None
+
+    def _add_sidebar_title(page_path: str, group_title: str):
+        """Add sidebarTitle: "Overview" to a page whose title matches its group."""
+        mdx_path = os.path.join(output_dir, f"{page_path}.mdx")
+        if not os.path.isfile(mdx_path):
+            return
+        try:
+            with open(mdx_path, 'r') as f:
+                content = f.read()
+            if not content.startswith('---'):
+                return
+            end = content.index('---', 3)
             frontmatter = content[3:end].strip()
-            for line in frontmatter.split('\n'):
-                m = re.match(r'^icon:\s*"?([^"]+)"?\s*$', line)
-                if m:
-                    return m.group(1).strip()
+
+            # Check if title matches group title
+            page_title = _extract_field(frontmatter, 'title')
+            if not page_title or page_title.lower() != group_title.lower():
+                return
+
+            # Don't add if sidebarTitle already exists
+            if 'sidebarTitle:' in frontmatter:
+                return
+
+            # Insert sidebarTitle after title line and remove icon
+            new_frontmatter = frontmatter.replace(
+                f'title: "{page_title}"',
+                f'title: "{page_title}"\nsidebarTitle: "Overview"',
+            )
+            new_frontmatter = re.sub(r'\n?icon:\s*"?[^"\n]+"?\s*$', '', new_frontmatter, flags=re.MULTILINE)
+            new_content = f'---\n{new_frontmatter}\n---{content[end + 3:]}'
+            with open(mdx_path, 'w') as f:
+                f.write(new_content)
         except (ValueError, IOError):
             pass
-        return None
 
     def _process_pages(pages: list) -> list:
         for item in pages:
@@ -203,9 +240,13 @@ def inject_nav_icons(nav: list, output_dir: str) -> list:
                         first_page = p
                         break
                 if first_page:
-                    icon = _extract_icon(first_page)
-                    if icon:
-                        item['icon'] = icon
+                    frontmatter = _read_frontmatter(first_page)
+                    if frontmatter:
+                        icon = _extract_field(frontmatter, 'icon')
+                        if icon:
+                            item['icon'] = icon
+                    # Rename parent page to "Overview" in sidebar
+                    _add_sidebar_title(first_page, item['group'])
                 # Recurse into nested groups
                 _process_pages(item['pages'])
         return pages
