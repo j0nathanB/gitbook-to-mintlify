@@ -15,9 +15,9 @@ def build_docs_json(
     """Build a complete docs.json configuration."""
 
     config = {
-        "$schema": "https://mintlify.com/docs.json",
-        "theme": "mint",
+        "$schema": "https://mintlify.com/schema.json",
         "name": assets.site_name or "Documentation",
+        "theme": "quill",
         "colors": _build_colors(assets),
         "navigation": _build_navigation(nav_tree, pages_written),
     }

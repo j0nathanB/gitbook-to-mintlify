@@ -45,6 +45,9 @@ class MarkdownConverter:
         if not description:
             description = existing_fm.get('description', '')
 
+        # Resolve {% include %} tags by inlining included file content
+        body = self._resolve_includes(body)
+
         # Convert GitBook template tags to Mintlify components
         body = self._convert_hints(body)
         body = self._convert_tabs(body)
@@ -58,6 +61,9 @@ class MarkdownConverter:
 
         # Clean up any remaining template tags
         body = self._cleanup_template_tags(body)
+
+        # Convert <pre><code> HTML blocks to fenced code blocks
+        body = self._convert_pre_code_blocks(body)
 
         # Convert image references
         body = self._convert_images(body)
@@ -325,15 +331,71 @@ class MarkdownConverter:
         pattern = r'\{%\s*stepper\s*%\}(.*?)\{%\s*endstepper\s*%\}'
         return re.sub(pattern, replace_stepper, content, flags=re.DOTALL)
 
+    def _resolve_includes(self, content: str) -> str:
+        """Resolve {% include %} tags by inlining the referenced file content."""
+        import os
+
+        def replace_include(match):
+            include_path = match.group(1)
+            # Resolve the .gitbook/includes/ path
+            gitbook_match = re.search(r'\.gitbook/includes/(.+)', include_path)
+            if gitbook_match and self.base_path:
+                full_path = os.path.join(self.base_path, '.gitbook', 'includes', gitbook_match.group(1))
+                if os.path.isfile(full_path):
+                    with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+                        included = f.read()
+                    # Strip frontmatter from included file
+                    _, included_body = self._split_frontmatter(included)
+                    return included_body.strip()
+            self.qa_issues.append(f'Could not resolve include: {include_path}')
+            return ''
+
+        pattern = r'\{%\s*include\s+"([^"]+)"\s*%\}'
+        return re.sub(pattern, replace_include, content)
+
+    def _convert_pre_code_blocks(self, content: str) -> str:
+        """Convert <pre><code> HTML blocks to fenced code blocks."""
+        def replace_pre_code(match):
+            pre_attrs = match.group(1) or ''
+            code_attrs = match.group(2) or ''
+            inner = match.group(3)
+
+            # Extract language from class
+            lang = ''
+            lang_match = re.search(r'(?:class="lang(?:uage)?-(\w+)"|data-lang="(\w+)")', pre_attrs + ' ' + code_attrs)
+            if lang_match:
+                lang = lang_match.group(1) or lang_match.group(2) or ''
+
+            # Extract title from data-title
+            title = ''
+            title_match = re.search(r'data-title="([^"]+)"', pre_attrs)
+            if title_match:
+                title = title_match.group(1)
+
+            # Strip <strong> tags (GitBook line highlighting)
+            inner = re.sub(r'</?strong>', '', inner)
+            # Strip any other inline HTML
+            inner = re.sub(r'</?(?:em|mark|span)[^>]*>', '', inner)
+
+            header = f'```{lang}'
+            if title:
+                header += f' {title}'
+            return f'\n{header}\n{inner}\n```\n'
+
+        pattern = r'<pre[^>]*?((?:class|data-)[^>]*)?>\s*<code[^>]*?((?:class|data-)[^>]*)?>(.*?)</code>\s*</pre>'
+        return re.sub(pattern, replace_pre_code, content, flags=re.DOTALL)
+
     def _cleanup_template_tags(self, content: str) -> str:
         """Remove any remaining {% %} template tags that weren't caught by specific converters."""
         # Remove standalone end tags
         content = re.sub(r'\{%\s*end\w+\s*%\}', '', content)
-        # Flag any remaining opening tags as QA issues
+        # Flag and REMOVE any remaining opening tags
         remaining = re.findall(r'\{%\s*(\w+)[^%]*%\}', content)
         for tag in remaining:
-            if tag not in ('raw', 'endraw'):  # raw blocks are valid
+            if tag not in ('raw', 'endraw'):
                 self.qa_issues.append(f'Unconverted template tag: {{% {tag} %}}')
+        # Remove all remaining template tags
+        content = re.sub(r'\{%[^%]*%\}', '', content)
         return content
 
     # ---- Standard Markdown Adjustments ----
@@ -420,10 +482,32 @@ class MarkdownConverter:
         """Clean up the final MDX output."""
         # Strip HTML anchor tags GitBook adds to headings
         text = re.sub(r'\s*<a\s+href="#[^"]*"\s+id="[^"]*"\s*>\s*</a>', '', text)
-        # Also handle reversed attribute order
         text = re.sub(r'\s*<a\s+id="[^"]*"\s+href="#[^"]*"\s*>\s*</a>', '', text)
-        # Strip <picture>/<source> tags (GitBook dark mode image wrappers)
-        text = re.sub(r'<picture>.*?</picture>', lambda m: _extract_img_from_picture(m.group(0)), text, flags=re.DOTALL)
+
+        # Convert <figure>/<picture> wrappers to clean markdown images
+        text = re.sub(r'<figure>.*?</figure>', lambda m: _figure_to_md(m.group(0)), text, flags=re.DOTALL)
+        text = re.sub(r'<picture>.*?</picture>', lambda m: _picture_to_img(m.group(0)), text, flags=re.DOTALL)
+
+        # Make void HTML elements self-closing for MDX compatibility
+        # Use a function to avoid double self-closing (/ />)
+        def make_self_closing(tag_name):
+            def replacer(match):
+                attrs = match.group(1).rstrip().rstrip('/')
+                return f'<{tag_name} {attrs.strip()} />'
+            return replacer
+        text = re.sub(r'<img\s([^>]*?)>', make_self_closing('img'), text)
+        text = re.sub(r'<br\s*/?>', '<br />', text)
+        text = re.sub(r'<hr\s*/?>', '<hr />', text)
+
+        # Fix any double self-closing patterns (e.g., / />)
+        text = re.sub(r'/\s+/>', '/>', text)
+
+        # Strip <mark> tags (GitBook colored text) — keep inner text
+        text = re.sub(r'<mark[^>]*>(.*?)</mark>', r'\1', text, flags=re.DOTALL)
+
+        # Escape curly braces in text that MDX would interpret as JSX expressions
+        text = _escape_jsx_braces(text)
+
         # Remove excessive blank lines
         text = re.sub(r'\n{4,}', '\n\n\n', text)
         # Remove trailing whitespace
@@ -433,9 +517,85 @@ class MarkdownConverter:
         return text
 
 
-def _extract_img_from_picture(picture_html: str) -> str:
-    """Extract the <img> from a <picture> element."""
-    img_match = re.search(r'<img\s[^>]*>', picture_html)
+def _escape_jsx_braces(text: str) -> str:
+    """Escape { and } outside of fenced code blocks so MDX doesn't treat them as JSX."""
+    lines = text.split('\n')
+    result = []
+    in_code_block = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Track fenced code blocks
+        if stripped.startswith('```'):
+            in_code_block = not in_code_block
+            result.append(line)
+            continue
+
+        if in_code_block:
+            result.append(line)
+            continue
+
+        # Outside code blocks, escape { and } that aren't part of:
+        # - JSX comments: {/* ... */}
+        # - Inline code: `...{...}...`
+
+        # Split by inline code spans to protect them
+        parts = re.split(r'(`[^`]*`)', line)
+        new_parts = []
+        for part in parts:
+            if part.startswith('`') and part.endswith('`'):
+                new_parts.append(part)
+            else:
+                # Protect JSX comments {/* ... */} with sentinel
+                protected = []
+                part = re.sub(r'\{/\*.*?\*/\}', lambda m: (protected.append(m.group(0)), f'\x00JSXC{len(protected)-1}\x00')[1], part)
+                # Escape all remaining braces
+                part = part.replace('{', '\\{').replace('}', '\\}')
+                # Restore protected JSX comments
+                for i, p in enumerate(protected):
+                    part = part.replace(f'\x00JSXC{i}\x00', p)
+                new_parts.append(part)
+        result.append(''.join(new_parts))
+
+    return '\n'.join(result)
+
+
+def _figure_to_md(figure_html: str) -> str:
+    """Convert a <figure> block to a markdown image."""
+    img_match = re.search(r'<img\s[^>]*src="([^"]*)"[^>]*>', figure_html)
+    if not img_match:
+        return ''
+    src = img_match.group(1)
+    # Rewrite .gitbook/assets paths
+    gitbook_match = re.search(r'\.gitbook/assets/(.+)', src)
+    if gitbook_match:
+        filename = gitbook_match.group(1)
+        filename = re.sub(r'[^\w.\-]', '-', filename)
+        src = f'/images/{filename}'
+    alt_match = re.search(r'alt="([^"]*)"', figure_html)
+    alt = alt_match.group(1) if alt_match else ''
+    caption_match = re.search(r'<figcaption>(.*?)</figcaption>', figure_html, re.DOTALL)
+    result = f'![{alt}]({src})'
+    if caption_match:
+        result += f'\n*{caption_match.group(1).strip()}*'
+    return result
+
+
+def _picture_to_img(picture_html: str) -> str:
+    """Extract a simple image from a <picture> element."""
+    img_match = re.search(r'<img\s([^>]*)>', picture_html)
     if img_match:
-        return img_match.group(0)
+        attrs = img_match.group(1)
+        # Rewrite .gitbook/assets in src
+        def rewrite_src(m):
+            src = m.group(1)
+            gitbook_match = re.search(r'\.gitbook/assets/(.+)', src)
+            if gitbook_match:
+                filename = gitbook_match.group(1)
+                filename = re.sub(r'[^\w.\-]', '-', filename)
+                return f'src="/images/{filename}"'
+            return m.group(0)
+        attrs = re.sub(r'src="([^"]*)"', rewrite_src, attrs)
+        return f'<img {attrs} />'
     return ''

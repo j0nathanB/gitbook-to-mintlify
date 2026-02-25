@@ -251,11 +251,11 @@ def run_directory_migration(source_dir: str, output_dir: str, interactive: bool 
     print()
     print("[5/5] Generating docs.json and QA report...")
 
-    # Build docs.json using the SUMMARY.md navigation
+    # Build mint.json using the SUMMARY.md navigation
     config = {
-        "$schema": "https://mintlify.com/docs.json",
-        "theme": "mint",
+        "$schema": "https://mintlify.com/schema.json",
         "name": assets.site_name,
+        "theme": "quill",
         "colors": {
             "primary": assets.primary_color or "#0D9373",
             "light": assets.primary_color or "#0D9373",
@@ -269,19 +269,18 @@ def run_directory_migration(source_dir: str, output_dir: str, interactive: bool 
             "light": assets.logo_light_path,
             "dark": assets.logo_dark_path or assets.logo_light_path,
         }
-    if assets.favicon_path:
-        config["favicon"] = assets.favicon_path
+    config["favicon"] = assets.favicon_path or "/images/favicon.svg"
 
-    docs_json_path = os.path.join(output_dir, 'docs.json')
-    with open(docs_json_path, 'w') as f:
+    mint_json_path = os.path.join(output_dir, 'mint.json')
+    with open(mint_json_path, 'w') as f:
         json.dump(config, f, indent=2)
-    print(f"  ✓ Generated {docs_json_path}")
+    print(f"  ✓ Generated {mint_json_path}")
 
     # QA report
     qa_report = generate_qa_report(
         pages_written, failed_pages, all_qa_issues, assets, [], source_dir
     )
-    qa_path = os.path.join(output_dir, 'QA-REPORT.md')
+    qa_path = os.path.join(output_dir, 'QA-REPORT.txt')
     with open(qa_path, 'w') as f:
         f.write(qa_report)
     print(f"  ✓ Generated {qa_path}")
@@ -298,7 +297,7 @@ def run_directory_migration(source_dir: str, output_dir: str, interactive: bool 
     print(f"  QA issues found:  {len(all_qa_issues)}")
     print()
     print("  Next steps:")
-    print("  1. Review QA-REPORT.md for items needing manual attention")
+    print("  1. Review QA-REPORT.txt for items needing manual attention")
     print("  2. Run `mintlify dev` to preview the site locally")
     print("  3. Verify navigation structure in docs.json")
     print("  4. Add branding assets (logos, favicon) if not provided")
@@ -445,7 +444,7 @@ def run_url_migration(url: str, output_dir: str, interactive: bool = True):
     qa_report = generate_qa_report(
         pages_written, failed_pages, all_qa_issues, assets, nav_tree, base_url
     )
-    qa_path = os.path.join(output_dir, 'QA-REPORT.md')
+    qa_path = os.path.join(output_dir, 'QA-REPORT.txt')
     with open(qa_path, 'w') as f:
         f.write(qa_report)
     print(f"  ✓ Generated {qa_path}")
@@ -462,7 +461,7 @@ def run_url_migration(url: str, output_dir: str, interactive: bool = True):
     print(f"  QA issues found:  {len(all_qa_issues)}")
     print()
     print("  Next steps:")
-    print("  1. Review QA-REPORT.md for items needing manual attention")
+    print("  1. Review QA-REPORT.txt for items needing manual attention")
     print("  2. Run `mintlify dev` to preview the site locally")
     print("  3. Verify navigation structure in docs.json")
     print("  4. Check branding (logos, colors, fonts) match the original")

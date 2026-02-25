@@ -54,7 +54,7 @@ python migrate.py https://docs.company.com --output ./mintlify-docs
 ```
 output/
 ├── docs.json              # Complete Mintlify config (nav, branding, theme)
-├── QA-REPORT.md           # Checklist of items needing manual review
+├── QA-REPORT.txt           # Checklist of items needing manual review
 ├── images/
 │   ├── logo-light.png     # Auto-extracted logos
 │   ├── logo-dark.png
