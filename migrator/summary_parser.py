@@ -34,6 +34,9 @@ def parse_summary(content: str) -> tuple[list[SummaryGroup], list[SummaryPage]]:
     current_group = None
     page_order = 0
 
+    # Stack tracks (indent_level, pages_list_ref) for nesting
+    nesting_stack = []
+
     for line in lines:
         stripped = line.strip()
 
@@ -48,6 +51,7 @@ def parse_summary(content: str) -> tuple[list[SummaryGroup], list[SummaryPage]]:
             group_title = re.sub(r'\s*<a[^>]*>.*?</a>\s*', '', group_title).strip()
             current_group = SummaryGroup(title=group_title)
             groups.append(current_group)
+            nesting_stack = []
             continue
 
         # Page entries: * [Title](path.md) or  * [Title](path.md)
@@ -75,37 +79,42 @@ def parse_summary(content: str) -> tuple[list[SummaryGroup], list[SummaryPage]]:
         page_order += 1
         all_pages.append(page)
 
-        # Add to current group
-        if current_group is not None:
-            if indent <= 2:
-                # Top-level page in group
-                current_group.pages.append(page)
-            else:
-                # Nested page — find the parent
-                # For simplicity, add to a sub-group based on the parent
-                if current_group.pages:
-                    last = current_group.pages[-1]
-                    if isinstance(last, SummaryGroup):
-                        last.pages.append(page)
-                    else:
-                        # Create a sub-group from the last page
-                        sub_group = SummaryGroup(
-                            title=last.title,
-                            pages=[page],
-                        )
-                        # Replace the last page with the group (which implicitly includes it)
-                        current_group.pages[-1] = sub_group
-                        # The parent page itself should be in the group
-                        sub_group.pages.insert(0, last)
-                else:
-                    current_group.pages.append(page)
-        else:
+        if current_group is None:
             # No group yet — create an implicit overview group
             if not groups or groups[0].title != 'Overview':
                 current_group = SummaryGroup(title='Overview')
                 groups.insert(0, current_group)
             current_group = groups[0]
+
+        # Pop stack entries at same or deeper indent level
+        while nesting_stack and nesting_stack[-1][0] >= indent:
+            nesting_stack.pop()
+
+        if not nesting_stack:
+            # Top-level page in group
             current_group.pages.append(page)
+            nesting_stack.append((indent, current_group.pages))
+        else:
+            # This page is a child — nest under the last item in the parent container
+            parent_list = nesting_stack[-1][1]
+            last_item = parent_list[-1] if parent_list else None
+
+            if isinstance(last_item, SummaryGroup):
+                # Already a sub-group, add to it
+                last_item.pages.append(page)
+                nesting_stack.append((indent, last_item.pages))
+            elif isinstance(last_item, SummaryPage):
+                # Convert the parent page into a sub-group containing itself and this child
+                sub_group = SummaryGroup(
+                    title=last_item.title,
+                    pages=[last_item, page],
+                )
+                parent_list[-1] = sub_group
+                nesting_stack.append((indent, sub_group.pages))
+            else:
+                # Fallback
+                current_group.pages.append(page)
+                nesting_stack.append((indent, current_group.pages))
 
     return groups, all_pages
 
@@ -129,42 +138,29 @@ def _to_mintlify_path(gitbook_path: str) -> str:
 
 
 def build_nav_from_summary(groups: list[SummaryGroup]) -> list[dict]:
-    """Convert parsed summary groups into docs.json navigation format."""
+    """Convert parsed summary groups into mint.json navigation format."""
     nav = []
-
     for group in groups:
         nav_group = {
             "group": group.title,
-            "pages": [],
+            "pages": _build_pages(group.pages),
         }
-
-        for item in group.pages:
-            if isinstance(item, SummaryGroup):
-                # Nested group
-                sub_group = {
-                    "group": item.title,
-                    "pages": [],
-                }
-                for sub_item in item.pages:
-                    if isinstance(sub_item, SummaryPage):
-                        sub_group["pages"].append(sub_item.mintlify_path)
-                    elif isinstance(sub_item, SummaryGroup):
-                        # Deep nesting — flatten
-                        inner = {
-                            "group": sub_item.title,
-                            "pages": [
-                                p.mintlify_path for p in sub_item.pages
-                                if isinstance(p, SummaryPage)
-                            ],
-                        }
-                        if inner["pages"]:
-                            sub_group["pages"].append(inner)
-                if sub_group["pages"]:
-                    nav_group["pages"].append(sub_group)
-            elif isinstance(item, SummaryPage):
-                nav_group["pages"].append(item.mintlify_path)
-
         if nav_group["pages"]:
             nav.append(nav_group)
-
     return nav
+
+
+def _build_pages(items: list) -> list:
+    """Recursively convert a list of SummaryPage/SummaryGroup into nav pages."""
+    pages = []
+    for item in items:
+        if isinstance(item, SummaryPage):
+            pages.append(item.mintlify_path)
+        elif isinstance(item, SummaryGroup):
+            sub = {
+                "group": item.title,
+                "pages": _build_pages(item.pages),
+            }
+            if sub["pages"]:
+                pages.append(sub)
+    return pages
