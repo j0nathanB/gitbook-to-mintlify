@@ -53,6 +53,8 @@ class MarkdownConverter:
         if not description:
             description = existing_fm.get('description', '')
 
+        icon = existing_fm.get('icon', '')
+
         # Resolve {% include %} tags by inlining included file content
         body = self._resolve_includes(body)
 
@@ -86,7 +88,7 @@ class MarkdownConverter:
         body = self._remove_duplicate_title(body, title)
 
         # Build Mintlify frontmatter
-        frontmatter = self._build_frontmatter(title, description)
+        frontmatter = self._build_frontmatter(title, description, icon)
 
         # Clean up
         result = frontmatter + body
@@ -144,13 +146,15 @@ class MarkdownConverter:
         body = re.sub(pattern, '', body, count=1, flags=re.MULTILINE)
         return body
 
-    def _build_frontmatter(self, title: str, description: str) -> str:
+    def _build_frontmatter(self, title: str, description: str, icon: str = '') -> str:
         """Generate Mintlify MDX frontmatter."""
         lines = ['---']
         if title:
             lines.append(f'title: "{self._escape_yaml(title)}"')
         if description:
             lines.append(f'description: "{self._escape_yaml(description)}"')
+        if icon:
+            lines.append(f'icon: "{icon}"')
         lines.append('---')
         lines.append('')
         return '\n'.join(lines)
