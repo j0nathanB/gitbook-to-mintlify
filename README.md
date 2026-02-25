@@ -18,7 +18,7 @@ python migrate.py https://docs.example.com --output ./my-docs
 python migrate.py ./gitbook-repo --output ./my-docs --non-interactive
 ```
 
-**Tested against GitBook's own documentation** (154 pages, 240 images): 152/154 pages converted successfully, with 10 navigation groups and full component mapping.
+**Tested against GitBook's own documentation** (154 pages, 240 images): 154/154 pages converted with 0 parse errors, nested navigation groups, icons, and full component mapping.
 
 ## Two Input Modes
 
@@ -43,28 +43,31 @@ python migrate.py https://docs.company.com --output ./mintlify-docs
 1. **Discovers all pages** — parses SUMMARY.md (directory mode) or crawls sitemap/navigation (URL mode)
 2. **Extracts branding** — logos, favicon, primary color, fonts (auto-detected or prompted)
 3. **Converts content** — GitBook markdown/HTML to Mintlify MDX with component mapping
-4. **Maps GitBook components** to Mintlify equivalents (hints → callouts, tabs → Tabs, expandables → Accordions, steppers → Steps, code tabs → CodeGroup, content-refs → Cards)
-5. **Rewrites internal links** — `.md` file paths to Mintlify-compatible routes
-6. **Handles images** — copies from `.gitbook/assets/` or downloads from URLs to `/images/`
-7. **Generates `docs.json`** — complete Mintlify config with navigation, branding, and theme
-8. **Produces a QA report** — flags unconverted components, missing branding, and items needing review
+4. **Maps GitBook components** to Mintlify equivalents (hints → callouts, tabs → Tabs, expandables → Accordions, steppers → Steps, code tabs → CodeGroup, content-refs → Cards, card tables → CardGroup)
+5. **Builds nested navigation** — converts SUMMARY.md indentation into nested Mintlify groups with icons, parent pages renamed to "Overview" to avoid duplication
+6. **Resolves includes** — inlines `{% include %}` files from `.gitbook/includes/`
+7. **Rewrites internal links** — `.md` file paths to Mintlify-compatible routes, resolves relative paths against current file directory
+8. **Escapes MDX-unsafe content** — curly braces `{}` outside code blocks, `<pre><code>` HTML, void elements made self-closing
+9. **Handles images** — copies from `.gitbook/assets/` or downloads from URLs to `/images/`
+10. **Generates `mint.json`** — complete Mintlify config with navigation, branding, and theme
+11. **Produces a QA report** — flags unconverted components, missing branding, and items needing review
 
 ### Output Structure
 
 ```
 output/
-├── docs.json              # Complete Mintlify config (nav, branding, theme)
+├── mint.json               # Complete Mintlify config (nav, branding, theme)
 ├── QA-REPORT.txt           # Checklist of items needing manual review
 ├── images/
 │   ├── logo-light.png     # Auto-extracted logos
 │   ├── logo-dark.png
-│   ├── favicon.ico
-│   └── img-001.png ...    # Page images
+│   ├── favicon.svg
+│   └── ...                # Page images from .gitbook/assets/
 ├── index.mdx              # Homepage
 ├── getting-started/
 │   ├── quickstart.mdx
-│   └── installation.mdx
-└── guides/
+│   └── ...
+└── creating-content/
     └── ...
 ```
 
@@ -184,17 +187,24 @@ At 6+ migrations per week across varied GitBook configurations:
 | `{% embed url="..." %}` | `<Frame>` (video) or link | Flagged for QA |
 | `{% swagger %}` / `{% api-method %}` | Flagged in QA report | Recommend OpenAPI spec |
 | `{% file src="..." %}` | `[caption](src)` | Download link preserved |
+| `{% include %}` | Inlined content | Resolved from `.gitbook/includes/` |
+| `<table data-view="cards">` | `<CardGroup>` / `<Card>` | Title, description, href, cover image extracted |
+| `data-card-size="large"` | `cols="2"` | Large cards get 2-column layout (default 3) |
+| `<pre><code>` | Fenced code blocks | `<strong>` line highlighting stripped |
 | Code blocks | Fenced code blocks | Language class detected |
 | Tables | Markdown tables | Complex tables may need review |
 | Images (`.gitbook/assets/`) | `![alt](/images/...)` | Copied locally, paths rewritten |
-| Internal links (`.md`) | Rewritten relative paths | `/getting-started/quickstart` |
+| Internal links (`.md`) | Rewritten relative paths | Resolved against current file directory |
+| Frontmatter `icon` | Preserved | Carried to page and nav group |
+| YAML block scalars (`>-`) | Parsed correctly | Multi-line descriptions preserved |
+| Curly braces `{}` | Escaped `\{\}` | Prevents MDX JSX parse errors |
 | `{% columns %}`, `{% if %}`, etc. | Flagged in QA report | No direct Mintlify equivalent |
 
 ---
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.9+
 - Dependencies: `requests`, `beautifulsoup4`, `lxml`, `Pillow`
 
 ```bash
