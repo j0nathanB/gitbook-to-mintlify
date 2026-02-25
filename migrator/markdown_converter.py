@@ -485,7 +485,10 @@ class MarkdownConverter:
             if not cards:
                 return table_html
 
-            cols = min(len(cards), 3)
+            # Check for data-card-size="large" → 2 columns, otherwise 3
+            is_large = 'data-card-size="large"' in table_html
+            max_cols = 2 if is_large else 3
+            cols = min(len(cards), max_cols)
             result = f'\n<CardGroup cols="{cols}">\n\n'
             result += '\n\n'.join(cards)
             result += '\n\n</CardGroup>\n'
