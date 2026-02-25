@@ -54,7 +54,7 @@ def parse_summary(content: str) -> tuple[list[SummaryGroup], list[SummaryPage]]:
             nesting_stack = []
             continue
 
-        # Page entries: * [Title](path.md) or  * [Title](path.md)
+        # Page entries: * [Title](path.md) or  * [Title](path.md "optional title")
         link_match = re.match(r'^(\s*)\*\s+\[([^\]]+)\]\(([^)]+)\)', line)
         if not link_match:
             continue
@@ -62,6 +62,9 @@ def parse_summary(content: str) -> tuple[list[SummaryGroup], list[SummaryPage]]:
         indent = len(link_match.group(1))
         title = link_match.group(2).strip()
         path = link_match.group(3).strip()
+
+        # Strip markdown link title attribute (e.g., 'path.md "Title"')
+        path = re.sub(r'\s+"[^"]*"\s*$', '', path)
 
         # Skip external links
         if path.startswith(('http://', 'https://')):
@@ -164,3 +167,50 @@ def _build_pages(items: list) -> list:
             if sub["pages"]:
                 pages.append(sub)
     return pages
+
+
+def inject_nav_icons(nav: list, output_dir: str) -> list:
+    """Add icons to navigation groups by reading page frontmatter from output."""
+    import os
+
+    def _extract_icon(page_path: str) -> Optional[str]:
+        """Read icon from a converted page's frontmatter."""
+        mdx_path = os.path.join(output_dir, f"{page_path}.mdx")
+        if not os.path.isfile(mdx_path):
+            return None
+        try:
+            with open(mdx_path, 'r') as f:
+                content = f.read()
+            if not content.startswith('---'):
+                return None
+            end = content.index('---', 3)
+            frontmatter = content[3:end].strip()
+            for line in frontmatter.split('\n'):
+                m = re.match(r'^icon:\s*"?([^"]+)"?\s*$', line)
+                if m:
+                    return m.group(1).strip()
+        except (ValueError, IOError):
+            pass
+        return None
+
+    def _process_pages(pages: list) -> list:
+        for item in pages:
+            if isinstance(item, dict) and 'group' in item:
+                # Find the first string page path in the group
+                first_page = None
+                for p in item['pages']:
+                    if isinstance(p, str):
+                        first_page = p
+                        break
+                if first_page:
+                    icon = _extract_icon(first_page)
+                    if icon:
+                        item['icon'] = icon
+                # Recurse into nested groups
+                _process_pages(item['pages'])
+        return pages
+
+    for group in nav:
+        _process_pages(group.get('pages', []))
+
+    return nav

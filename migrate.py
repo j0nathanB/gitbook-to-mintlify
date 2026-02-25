@@ -30,7 +30,7 @@ from migrator.scraper import GitBookScraper
 from migrator.converter import GitBookConverter
 from migrator.branding import BrandingExtractor, BrandAssets, generate_dark_variant
 from migrator.config import build_docs_json, write_docs_json
-from migrator.summary_parser import parse_summary, build_nav_from_summary
+from migrator.summary_parser import parse_summary, build_nav_from_summary, inject_nav_icons
 from migrator.markdown_converter import MarkdownConverter
 from migrator.utils import ensure_dir
 
@@ -160,14 +160,17 @@ def run_directory_migration(source_dir: str, output_dir: str, interactive: bool 
     image_count = 0
     if os.path.isdir(gitbook_assets):
         os.makedirs(images_dir, exist_ok=True)
-        for fname in os.listdir(gitbook_assets):
+        for fname in sorted(os.listdir(gitbook_assets)):
             src = os.path.join(gitbook_assets, fname)
             if os.path.isfile(src):
                 # Clean filename
                 clean_name = re.sub(r'[^\w.\-]', '-', fname)
                 dst = os.path.join(images_dir, clean_name)
-                shutil.copy2(src, dst)
-                image_count += 1
+                try:
+                    shutil.copy2(src, dst)
+                    image_count += 1
+                except OSError as e:
+                    print(f"  ⚠ Failed to copy {fname}: {e}")
         print(f"  ✓ Copied {image_count} images from .gitbook/assets/")
 
     if interactive:
@@ -250,6 +253,9 @@ def run_directory_migration(source_dir: str, output_dir: str, interactive: bool 
     # Step 5: Generate docs.json + QA report
     print()
     print("[5/5] Generating docs.json and QA report...")
+
+    # Add icons to navigation groups from converted page frontmatter
+    navigation = inject_nav_icons(navigation, output_dir)
 
     # Build mint.json using the SUMMARY.md navigation
     config = {
