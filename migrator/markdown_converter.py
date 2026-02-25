@@ -30,10 +30,18 @@ class MarkdownConverter:
         """
         self.base_path = base_path
         self.qa_issues = []
+        self._current_page_dir = ''
 
-    def convert(self, content: str, title: str = '', description: str = '') -> str:
-        """Convert a GitBook markdown file to Mintlify MDX."""
+    def convert(self, content: str, title: str = '', description: str = '', page_path: str = '') -> str:
+        """Convert a GitBook markdown file to Mintlify MDX.
+
+        Args:
+            page_path: Path of the current file relative to source root (e.g. 'publishing/settings.md')
+        """
         self.qa_issues = []
+        # Store current page's directory for resolving relative links
+        import os
+        self._current_page_dir = os.path.dirname(page_path) if page_path else ''
 
         # Extract existing frontmatter if present
         existing_fm, body = self._split_frontmatter(content)
@@ -441,6 +449,11 @@ class MarkdownConverter:
             text = match.group(1)
             href = match.group(2)
 
+            # Strip markdown link title attributes (e.g., 'path.md "mention"')
+            title_match = re.match(r'^(.+?)\s+"[^"]*"\s*$', href)
+            if title_match:
+                href = title_match.group(1)
+
             # Skip external links, anchors, and images
             if href.startswith(('http://', 'https://', '#', 'mailto:')):
                 return match.group(0)
@@ -456,6 +469,8 @@ class MarkdownConverter:
 
     def _convert_md_path(self, path: str) -> str:
         """Convert a GitBook .md file path to a Mintlify page path."""
+        import posixpath
+
         # Preserve fragment
         fragment = ''
         if '#' in path:
@@ -473,8 +488,13 @@ class MarkdownConverter:
         # Remove leading ./
         path = re.sub(r'^\./', '', path)
 
-        # Remove leading ../  (resolve relative paths as best we can)
-        path = re.sub(r'^\.\./+', '', path)
+        # Resolve relative paths against current page directory
+        if not path.startswith('/') and self._current_page_dir:
+            # Path is relative to the current file's directory
+            path = posixpath.normpath(posixpath.join(self._current_page_dir, path))
+
+        # Clean up
+        path = path.strip('/')
 
         return path + fragment
 

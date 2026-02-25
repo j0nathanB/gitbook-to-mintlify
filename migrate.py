@@ -227,7 +227,7 @@ def run_directory_migration(source_dir: str, output_dir: str, interactive: bool 
             md_content = f.read()
 
         # Convert
-        mdx = converter.convert(md_content, title=page.title)
+        mdx = converter.convert(md_content, title=page.title, page_path=page.path)
 
         if converter.qa_issues:
             all_qa_issues.extend(
