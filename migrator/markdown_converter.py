@@ -402,11 +402,13 @@ class MarkdownConverter:
             table_html = match.group(0)
 
             # Parse column types from <thead> <th> attributes
-            col_types = []  # 'title', 'description', 'target', 'hidden'
+            col_types = []  # 'title', 'description', 'target', 'cover', 'hidden'
             for th_match in re.finditer(r'<th\b([^>]*)>', table_html):
                 attrs = th_match.group(1)
                 if 'data-card-target' in attrs:
                     col_types.append('target')
+                elif 'data-card-cover' in attrs and 'data-card-cover-dark' not in attrs:
+                    col_types.append('cover')
                 elif 'data-hidden' in attrs:
                     col_types.append('hidden')
                 elif not col_types:
@@ -427,6 +429,7 @@ class MarkdownConverter:
                 title = ''
                 description = ''
                 href = ''
+                img = ''
 
                 for i, cell in enumerate(cells):
                     col_type = col_types[i] if i < len(col_types) else 'hidden'
@@ -443,11 +446,23 @@ class MarkdownConverter:
                                 href = self._convert_md_path(raw_href)
                                 if not href.startswith(('http', '#', '/')):
                                     href = '/' + href
+                    elif col_type == 'cover':
+                        link_match = re.search(r'<a\s+href="([^"]+)"', cell)
+                        if link_match:
+                            img_src = link_match.group(1)
+                            gitbook_match = re.search(r'\.gitbook/assets/(.+)', img_src)
+                            if gitbook_match:
+                                filename = re.sub(r'[^\w.\-]', '-', gitbook_match.group(1))
+                                img = f'/images/{filename}'
+                            else:
+                                img = img_src
 
                 if title:
                     card_attrs = f'title="{self._escape_yaml(title)}"'
                     if href:
                         card_attrs += f' href="{href}"'
+                    if img:
+                        card_attrs += f' img="{img}"'
                     card = f'<Card {card_attrs}>\n{description}\n</Card>'
                     cards.append(card)
 
