@@ -106,16 +106,28 @@ class MarkdownConverter:
         fm_text = parts[1].strip()
         body = parts[2]
 
-        # Simple YAML parsing for key: value pairs
+        # Simple YAML parsing for key: value pairs (handles block scalars)
         fm = {}
-        for line in fm_text.split('\n'):
-            if ':' in line:
+        lines = fm_text.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if ':' in line and not line.startswith(' '):
                 key, _, value = line.partition(':')
                 value = value.strip().strip('"').strip("'")
-                # Skip YAML block scalar indicators (>-, |-, etc.)
+                # Handle YAML block scalar indicators (>-, |-, >, |)
                 if value in ('>', '|-', '>-', '|'):
+                    # Collect indented continuation lines
+                    block_lines = []
+                    i += 1
+                    while i < len(lines) and (lines[i].startswith('  ') or lines[i].strip() == ''):
+                        block_lines.append(lines[i].strip())
+                        i += 1
+                    fm[key.strip()] = ' '.join(bl for bl in block_lines if bl)
                     continue
-                fm[key.strip()] = value
+                if value:
+                    fm[key.strip()] = value
+            i += 1
 
         return fm, body
 
