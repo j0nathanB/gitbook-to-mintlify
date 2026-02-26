@@ -608,6 +608,15 @@ class MarkdownConverter:
         text = re.sub(r'\s*<a\s+href="#[^"]*"\s+id="[^"]*"\s*>\s*</a>', '', text)
         text = re.sub(r'\s*<a\s+id="[^"]*"\s+href="#[^"]*"\s*>\s*</a>', '', text)
 
+        # Strip anchor-only links from markdown headings
+        # GitBook adds invisible anchors like [](#some-id) or [](# "some-id")
+        text = re.sub(r'(^#{1,6}\s+.*?)\s*\[(?:[^\]]*)\]\(#[^)]*\)\s*$', r'\1', text, flags=re.MULTILINE)
+
+        # Remove empty HTML paragraphs and empty inline tags
+        text = re.sub(r'<p>\s*</p>', '', text)
+        text = re.sub(r'<strong>\s*</strong>', '', text)
+        text = re.sub(r'<em>\s*</em>', '', text)
+
         # Convert <figure>/<picture> wrappers to clean markdown images
         text = re.sub(r'<figure>.*?</figure>', lambda m: _figure_to_md(m.group(0)), text, flags=re.DOTALL)
         text = re.sub(r'<picture>.*?</picture>', lambda m: _picture_to_img(m.group(0)), text, flags=re.DOTALL)
@@ -629,10 +638,60 @@ class MarkdownConverter:
         # Strip <mark> tags (GitBook colored text) — keep inner text
         text = re.sub(r'<mark[^>]*>(.*?)</mark>', r'\1', text, flags=re.DOTALL)
 
+        # Rejoin inline images that GitBook split across lines.
+        # GitBook exports inline icons as block-level <picture> elements with
+        # &#x20; connectors: text&#x20;\n\n    <img .../>\n\n    &#x20;text
+        # Both sides have &#x20;
+        text = re.sub(
+            r'&#x20;\s*\n\s*\n\s*(<img\s[^>]*/\s*>)\s*\n\s*\n\s*&#x20;',
+            r' \1 ',
+            text,
+        )
+        # Only &#x20; before the image
+        text = re.sub(
+            r'&#x20;\s*\n\s*\n\s*(<img\s[^>]*/\s*>)\s*\n',
+            r' \1\n',
+            text,
+        )
+        # Only &#x20; after the image
+        text = re.sub(
+            r'\n\s*(<img\s[^>]*/\s*>)\s*\n\s*\n\s*&#x20;',
+            r' \1 ',
+            text,
+        )
+
+        # Rejoin indented <img> tags that are mid-sentence within list items.
+        # Pattern: text\n\n    <img .../>\n\n    lowercase-continuation
+        text = re.sub(
+            r'(\S[^\n]*)\n\n(\s+)(<img\s[^>]*/\s*>)\n\n\2([a-z][^\n]*)',
+            r'\1 \3 \4',
+            text,
+        )
+
+        # Clean up remaining &#x20; entities (just trailing spaces from GitBook)
+        text = text.replace('&#x20;', ' ')
+
+        # Add inline display style to <img> tags that appear inline with text.
+        # Mintlify wraps markdown images in a block-level zoom component, so we
+        # keep inline icons as <img> with explicit inline styling instead.
+        # Uses a sentinel to survive the JSX brace escaping pass.
+        text = _style_inline_imgs(text)
+
         # Escape curly braces in text that MDX would interpret as JSX expressions
         text = _escape_jsx_braces(text)
 
-        # Remove excessive blank lines
+        # Replace sentinel with actual JSX style attribute (after brace escaping)
+        text = text.replace('__INLINE_IMG_STYLE__', 'style={{display:"inline",height:"1em",verticalAlign:"middle"}}')
+
+        # Wrap 2+ adjacent Accordion blocks in AccordionGroup
+        text = _wrap_accordion_groups(text)
+
+        # Wrap 2+ adjacent code blocks with different languages in CodeGroup
+        text = _wrap_code_groups(text)
+
+        # Remove lines that are only whitespace
+        text = re.sub(r'^[^\S\n]+$', '', text, flags=re.MULTILINE)
+        # Collapse 3+ consecutive blank lines to 2
         text = re.sub(r'\n{4,}', '\n\n\n', text)
         # Remove trailing whitespace
         text = '\n'.join(line.rstrip() for line in text.split('\n'))
@@ -723,3 +782,128 @@ def _picture_to_img(picture_html: str) -> str:
         attrs = re.sub(r'src="([^"]*)"', rewrite_src, attrs)
         return f'<img {attrs} />'
     return ''
+
+
+def _wrap_accordion_groups(text: str) -> str:
+    """Wrap 2+ adjacent <Accordion>...</Accordion> blocks in <AccordionGroup>."""
+    # Match runs of 2+ Accordion blocks separated only by whitespace
+    pattern = r'((?:<Accordion\b[^>]*>.*?</Accordion>\s*){2,})'
+    def replacer(match):
+        block = match.group(1).strip()
+        return f'\n<AccordionGroup>\n\n{block}\n\n</AccordionGroup>\n'
+    return re.sub(pattern, replacer, text, flags=re.DOTALL)
+
+
+def _wrap_code_groups(text: str) -> str:
+    """Wrap 2+ adjacent fenced code blocks with different languages in <CodeGroup>."""
+    lines = text.split('\n')
+    result = []
+    i = 0
+
+    while i < len(lines):
+        # Look for a fenced code block start
+        if lines[i].strip().startswith('```') and lines[i].strip() != '```':
+            # Collect consecutive code blocks (separated by blank lines)
+            blocks = []
+            block_start = i
+            while i < len(lines):
+                opening = lines[i].strip()
+                if not opening.startswith('```') or opening == '```':
+                    break
+                # Extract language from opening fence
+                lang = opening.lstrip('`').split()[0] if opening.lstrip('`').split() else ''
+                # Find the closing ```
+                j = i + 1
+                while j < len(lines) and lines[j].strip() != '```':
+                    j += 1
+                if j >= len(lines):
+                    break  # unclosed block, bail
+                blocks.append({
+                    'lang': lang,
+                    'start': i,
+                    'end': j,  # line with closing ```
+                })
+                # Skip past closing ``` and any blank lines
+                k = j + 1
+                while k < len(lines) and lines[k].strip() == '':
+                    k += 1
+                # Check if next non-blank line is another code block
+                if k < len(lines) and lines[k].strip().startswith('```') and lines[k].strip() != '```':
+                    i = k
+                else:
+                    break
+
+            if len(blocks) >= 2:
+                # Check if languages differ
+                langs = {b['lang'] for b in blocks}
+                if len(langs) > 1:
+                    # Wrap in CodeGroup
+                    first = blocks[0]['start']
+                    last = blocks[-1]['end']
+                    # Output everything before the first block that we haven't output yet
+                    code_lines = lines[first:last + 1]
+                    result.append('<CodeGroup>')
+                    result.append('')
+                    result.extend(code_lines)
+                    result.append('')
+                    result.append('</CodeGroup>')
+                    i = last + 1
+                    continue
+                else:
+                    # Same language — don't wrap, just output normally
+                    last = blocks[-1]['end']
+                    result.extend(lines[block_start:last + 1])
+                    i = last + 1
+                    continue
+            else:
+                # Single block, output normally
+                last = blocks[-1]['end'] if blocks else i
+                result.extend(lines[block_start:last + 1])
+                i = last + 1
+                continue
+
+        result.append(lines[i])
+        i += 1
+
+    return '\n'.join(result)
+
+
+def _style_inline_imgs(text: str) -> str:
+    """Add inline display styling to <img> tags that appear inline with text.
+
+    Mintlify wraps markdown images ![alt](src) in a block-level zoom component.
+    Raw <img> tags with explicit inline styling bypass this and render inline.
+    Uses __INLINE_IMG_STYLE__ sentinel which gets replaced after brace escaping.
+    Standalone <img> tags (on their own line) are left as-is.
+    """
+    lines = text.split('\n')
+    result = []
+    in_code_block = False
+
+    for line in lines:
+        if line.strip().startswith('```'):
+            in_code_block = not in_code_block
+
+        if in_code_block or '<img ' not in line:
+            result.append(line)
+            continue
+
+        # Check if the line has content besides <img> tags and whitespace
+        without_imgs = re.sub(r'<img\s[^>]*/\s*>', '', line).strip()
+        if not without_imgs:
+            # Standalone image on its own line — keep as-is
+            result.append(line)
+            continue
+
+        # Inline image — add inline style sentinel
+        def add_inline_style(m):
+            tag = m.group(0)
+            # Don't double-add if already has a style
+            if '__INLINE_IMG_STYLE__' in tag or 'style=' in tag:
+                return tag
+            # Insert sentinel before the closing />
+            return tag.replace(' />', ' __INLINE_IMG_STYLE__ />')
+
+        result.append(re.sub(r'<img\s[^>]*/\s*>', add_inline_style, line))
+
+    return '\n'.join(result)
