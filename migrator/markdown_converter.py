@@ -7,6 +7,7 @@ converts those to Mintlify MDX components while preserving standard markdown.
 import re
 from typing import Optional
 
+from .icons import validate_icon
 from .utils import sanitize_filename
 
 
@@ -41,6 +42,7 @@ class MarkdownConverter:
             sidebar_title: Short title for sidebar display (from SUMMARY.md link title attr)
         """
         self.qa_issues = []
+        self.page_hidden = False
         # Store current page's directory for resolving relative links
         import os
         self._current_page_dir = os.path.dirname(page_path) if page_path else ''
@@ -55,7 +57,9 @@ class MarkdownConverter:
         if not description:
             description = existing_fm.get('description', '')
 
-        icon = existing_fm.get('icon', '')
+        icon = self._validate_icon(existing_fm.get('icon', ''))
+        hidden = existing_fm.get('hidden', '').lower() == 'true'
+        self.page_hidden = hidden
 
         # Resolve {% include %} tags by inlining included file content
         body = self._resolve_includes(body)
@@ -90,7 +94,7 @@ class MarkdownConverter:
         body = self._remove_duplicate_title(body, title)
 
         # Build Mintlify frontmatter
-        frontmatter = self._build_frontmatter(title, description, icon, sidebar_title)
+        frontmatter = self._build_frontmatter(title, description, icon, sidebar_title, hidden)
 
         # Clean up
         result = frontmatter + body
@@ -149,7 +153,7 @@ class MarkdownConverter:
         return body
 
     def _build_frontmatter(self, title: str, description: str, icon: str = '',
-                           sidebar_title: str = '') -> str:
+                           sidebar_title: str = '', hidden: bool = False) -> str:
         """Generate Mintlify MDX frontmatter."""
         lines = ['---']
         if title:
@@ -160,9 +164,26 @@ class MarkdownConverter:
             lines.append(f'description: "{self._escape_yaml(description)}"')
         if icon:
             lines.append(f'icon: "{icon}"')
+        if hidden:
+            lines.append('hidden: true')
         lines.append('---')
         lines.append('')
         return '\n'.join(lines)
+
+    def _validate_icon(self, icon: str) -> str:
+        """Validate icon against Mintlify's supported set.
+
+        Returns the icon if valid, empty string if not (with a QA warning).
+        """
+        if not icon:
+            return ''
+        valid = validate_icon(icon)
+        if valid:
+            return valid
+        self.qa_issues.append(
+            f'Stripped unsupported icon "{icon}" — not in FontAwesome free set'
+        )
+        return ''
 
     def _escape_yaml(self, text: str) -> str:
         """Escape special characters for YAML."""

@@ -3,23 +3,37 @@
 import json
 from typing import Optional
 
-from .crawler import NavItem
 from .branding import BrandAssets, generate_dark_variant
 
 
 def build_docs_json(
-    nav_tree: list[NavItem],
-    assets: BrandAssets,
-    pages_written: list[str],
+    nav_tree: list = None,
+    assets: BrandAssets = None,
+    pages_written: list = None,
+    navigation: list = None,
+    redirects: list = None,
 ) -> dict:
-    """Build a complete docs.json configuration."""
+    """Build a complete docs.json configuration.
+
+    Args:
+        nav_tree: NavItem tree from URL-mode crawling.
+        assets: Branding assets (logos, colors, fonts).
+        pages_written: List of page paths that were written.
+        navigation: Pre-built navigation array (from directory mode's SUMMARY.md).
+                     When provided, used directly instead of building from nav_tree.
+        redirects: List of redirect dicts [{"source": "...", "destination": "..."}].
+    """
+    if assets is None:
+        assets = BrandAssets()
+
+    nav_groups = navigation if navigation is not None else _build_navigation(nav_tree, pages_written)
 
     config = {
         "$schema": "https://mintlify.com/schema.json",
         "name": assets.site_name or "Documentation",
-        "theme": "quill",
+        "theme": "mint",
         "colors": _build_colors(assets),
-        "navigation": _build_navigation(nav_tree, pages_written),
+        "navigation": {"groups": nav_groups},
     }
 
     # Logo
@@ -37,6 +51,10 @@ def build_docs_json(
             "heading": {"family": assets.font_family},
             "body": {"family": assets.font_family},
         }
+
+    # Redirects
+    if redirects:
+        config["redirects"] = redirects
 
     return config
 
@@ -71,7 +89,7 @@ def _build_logo(assets: BrandAssets) -> Optional[dict]:
     return logo if logo else None
 
 
-def _build_navigation(nav_tree: list[NavItem], pages_written: list[str]) -> list:
+def _build_navigation(nav_tree: list, pages_written: list[str]) -> list:
     """Build the navigation array for docs.json."""
     # If we have a nav tree from the sidebar, use it
     if nav_tree:
@@ -81,7 +99,7 @@ def _build_navigation(nav_tree: list[NavItem], pages_written: list[str]) -> list
     return _pages_to_nav_groups(pages_written)
 
 
-def _nav_tree_to_config(items: list[NavItem], pages_written: list[str]) -> list:
+def _nav_tree_to_config(items: list, pages_written: list[str]) -> list:
     """Convert NavItem tree to docs.json navigation format."""
     nav = []
 
