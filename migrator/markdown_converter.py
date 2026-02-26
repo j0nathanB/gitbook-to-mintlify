@@ -60,6 +60,7 @@ class MarkdownConverter:
         icon = self._validate_icon(existing_fm.get('icon', ''))
         hidden = existing_fm.get('hidden', '').lower() == 'true'
         self.page_hidden = hidden
+        noindex = existing_fm.get('noIndex', '').lower() == 'true'
 
         # Resolve {% include %} tags by inlining included file content
         body = self._resolve_includes(body)
@@ -94,7 +95,7 @@ class MarkdownConverter:
         body = self._remove_duplicate_title(body, title)
 
         # Build Mintlify frontmatter
-        frontmatter = self._build_frontmatter(title, description, icon, sidebar_title, hidden)
+        frontmatter = self._build_frontmatter(title, description, icon, sidebar_title, hidden, noindex)
 
         # Clean up
         result = frontmatter + body
@@ -153,7 +154,8 @@ class MarkdownConverter:
         return body
 
     def _build_frontmatter(self, title: str, description: str, icon: str = '',
-                           sidebar_title: str = '', hidden: bool = False) -> str:
+                           sidebar_title: str = '', hidden: bool = False,
+                           noindex: bool = False) -> str:
         """Generate Mintlify MDX frontmatter."""
         lines = ['---']
         if title:
@@ -166,6 +168,8 @@ class MarkdownConverter:
             lines.append(f'icon: "{icon}"')
         if hidden:
             lines.append('hidden: true')
+        if noindex:
+            lines.append('noIndex: true')
         lines.append('---')
         lines.append('')
         return '\n'.join(lines)
