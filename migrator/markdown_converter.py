@@ -32,11 +32,13 @@ class MarkdownConverter:
         self.qa_issues = []
         self._current_page_dir = ''
 
-    def convert(self, content: str, title: str = '', description: str = '', page_path: str = '') -> str:
+    def convert(self, content: str, title: str = '', description: str = '', page_path: str = '',
+                sidebar_title: str = '') -> str:
         """Convert a GitBook markdown file to Mintlify MDX.
 
         Args:
             page_path: Path of the current file relative to source root (e.g. 'publishing/settings.md')
+            sidebar_title: Short title for sidebar display (from SUMMARY.md link title attr)
         """
         self.qa_issues = []
         # Store current page's directory for resolving relative links
@@ -88,7 +90,7 @@ class MarkdownConverter:
         body = self._remove_duplicate_title(body, title)
 
         # Build Mintlify frontmatter
-        frontmatter = self._build_frontmatter(title, description, icon)
+        frontmatter = self._build_frontmatter(title, description, icon, sidebar_title)
 
         # Clean up
         result = frontmatter + body
@@ -146,11 +148,14 @@ class MarkdownConverter:
         body = re.sub(pattern, '', body, count=1, flags=re.MULTILINE)
         return body
 
-    def _build_frontmatter(self, title: str, description: str, icon: str = '') -> str:
+    def _build_frontmatter(self, title: str, description: str, icon: str = '',
+                           sidebar_title: str = '') -> str:
         """Generate Mintlify MDX frontmatter."""
         lines = ['---']
         if title:
             lines.append(f'title: "{self._escape_yaml(title)}"')
+        if sidebar_title and sidebar_title != title:
+            lines.append(f'sidebarTitle: "{self._escape_yaml(sidebar_title)}"')
         if description:
             lines.append(f'description: "{self._escape_yaml(description)}"')
         if icon:

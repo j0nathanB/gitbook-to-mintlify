@@ -12,6 +12,7 @@ class SummaryPage:
     path: str  # GitBook .md file path
     mintlify_path: str  # Converted Mintlify path (no .md, no README)
     order: int = 0
+    sidebar_title: str = ''  # Short title from link title attr (e.g., "Toolbar")
 
 
 @dataclass
@@ -63,7 +64,11 @@ def parse_summary(content: str) -> tuple[list[SummaryGroup], list[SummaryPage]]:
         title = link_match.group(2).strip()
         path = link_match.group(3).strip()
 
-        # Strip markdown link title attribute (e.g., 'path.md "Title"')
+        # Extract markdown link title attribute as sidebar title (e.g., 'path.md "Toolbar"')
+        sidebar_title = ''
+        title_attr_match = re.search(r'\s+"([^"]*)"\s*$', path)
+        if title_attr_match:
+            sidebar_title = title_attr_match.group(1).strip()
         path = re.sub(r'\s+"[^"]*"\s*$', '', path)
 
         # Skip external links
@@ -78,6 +83,7 @@ def parse_summary(content: str) -> tuple[list[SummaryGroup], list[SummaryPage]]:
             path=path,
             mintlify_path=mintlify_path,
             order=page_order,
+            sidebar_title=sidebar_title,
         )
         page_order += 1
         all_pages.append(page)
